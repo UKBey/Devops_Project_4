@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: patent-app-deployment
+  labels:
+    app: patent-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: patent-app
+  template:
+    metadata:
+      labels:
+        app: patent-app
+    spec:
+      containers:
+        - name: patent-app
+          image: ukbey/patent-app:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
