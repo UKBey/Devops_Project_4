@@ -1,192 +1,392 @@
-# SWE304 Project 4 — Sunum Rehberi
+# SWE304 Project 4 — Sunum Rehberi (Basit Anlatim)
 
-## A) Sunumdan ONCE (bilgisayari acmissan ya da yeniden basladiysan)
+## Bu Proje Nedir? (Once konuyu anlayalim)
 
-> Sira onemli — bir oncekini bitirmeden digerine gecme.
+Yaptigimiz sey, basit bir web uygulamasini (**Patent Manager**) **otomatik olarak** sunucuya yukleyen bir sistem.
 
-### 1. Docker Desktop'i baslat
-Baslat menusu -> **Docker Desktop**. Sag alttaki tray icon yesil olana kadar bekle (~30 sn).
+Hayal et: Sen kodda bir degisiklik yapip GitHub'a yukluyorsun. **Sen baska hicbir sey yapmadan**, koddaki degisiklik 2-3 dakika icinde calisan canli sisteme geliyor. Bunun adina **CI/CD** (Continuous Integration / Continuous Deployment) deniyor.
 
+### Kullanilan araclar — kisaca her birinin gorevi
+
+| Arac | Ne ise yariyor? |
+|------|-----------------|
+| **Spring Boot** | Java ile yazilmis web uygulamamiz (Patent Manager) |
+| **Maven** | Java kodunu derleyip `.jar` dosyasi yapan arac |
+| **Docker** | Uygulamayi "container" denilen tasinabilir kutuya koyuyor. Her makinede ayni sekilde calisir. |
+| **DockerHub** | Docker container'larin saklandigi internet deposu (GitHub'in Docker versiyonu gibi) |
+| **Kubernetes (K8s)** | Container'lari calistiran, yoneten ve dagilim yapan sistem |
+| **Minikube** | Bilgisayarinda kucuk bir K8s kurulumu (gercek production cluster yerine) |
+| **Jenkins** | Otomatik calisma sihirbazi. GitHub'a push olunca tetiklenip tum islemleri sirayla yapar. |
+| **ngrok** | Lokal Jenkins'in internetten erisilebilmesini saglayan tunel (GitHub'in webhook gondermesi icin) |
+| **GitHub Webhook** | "Birisi push yapti!" mesajini Jenkins'e gonderen mekanizma |
+
+### Tum sistem nasil calisiyor? (Akis)
+
+```
+Sen kodu degistir → git push → GitHub
+                                  ↓ (webhook)
+                                ngrok tuneli
+                                  ↓
+                                Jenkins (lokal)
+                                  ↓
+        ┌─────────────────────────┴────────────────────────┐
+        │                                                   │
+   1. Kodu cek (git clone)                                  │
+   2. Maven ile jar yap                                     │
+   3. Docker image yap                                      │
+   4. DockerHub'a giris yap                                 │
+   5. Image'i DockerHub'a yukle  ────→  DockerHub          │
+   6. Minikube'e "yeni image var, guncelle" de              │
+                                                            │
+                                                            ↓
+                                              Minikube K8s cluster
+                                                  (2 pod calisiyor)
+                                                       ↓
+                                              Tarayicidan goruyorsun
+```
+
+### Uygulamanin kendisi ne yapiyor?
+
+**Patent Manager** — bilim insanlarinin patent kayitlarini tutan basit bir CRUD sitesi:
+
+- **Authors** (Yazarlar): id, isim, adres
+- **Patents** (Patentler): id, baslik, aciklama
+- **Certifications** (Sertifikalar): hangi yazarin hangi patentine, ne zaman, kac yil sureli sertifika verildigi
+
+Database olarak **H2 in-memory** kullaniyoruz (bilgisayarin RAM'inde tutulan basit bir DB, kurulum gerektirmez). Sayfa acildiginda Tesla, Edison, Curie ve onlarin patentleri seed olarak yukleniyor.
+
+Sag ust kosede yesil **pod chip** var — bu, anlik olarak hangi K8s pod'unun cevap verdigini gosteriyor. Sayfayi her yenileyince farkli pod'a gidebilir (bu, K8s'in "load balancing" ozelligi).
+
+---
+
+## A) SUNUMDAN ONCE — Hazirlik Adimlari
+
+> Bu adimlari **sunum gunu, bilgisayarin yeni acildiginda** sirayla yap. Hicbirini atlama.
+
+### 1. Docker Desktop'i ac
+
+Baslat menusu → **Docker Desktop** ikonuna tikla. Ekranin sag alt kosesindeki tepside Docker baliginin yesil olmasini bekle (~30 saniye).
+
+**Kontrol komutu:**
 ```powershell
 docker version
 ```
-> Server bilgisi gelmeli. Gelmezse Docker Desktop tam baslamamis demektir.
+**Bu ne yapiyor?** Docker'in calisip calismadigini sorar. "Server" diye bir bolum gorursen tamamdir.
 
-### 2. Minikube cluster'i baslat
+---
+
+### 2. Minikube'u baslat (lokal K8s cluster)
+
 ```powershell
 minikube start --driver=docker
+```
+**Bu ne yapiyor?** Bilgisayarinda kucuk bir K8s cluster ayaga kaldirir. (Driver olarak Docker kullaniyoruz cunku Windows'ta en stabilini.) Ilk acilmiyorsa 30-60 saniye surer.
+
+**Kontrol:**
+```powershell
 minikube status
 kubectl get nodes
 ```
-> `host: Running` ve node `Ready` olmali. Ilk acmiyorsan 30-60 sn, eski cluster ayagaya kalkar.
+> `host: Running` ve node'un `Ready` yazmasi gerekiyor.
 
-### 3. K8s deployment ve service'i yeniden uygula (opsiyonel)
-Onceden uygulanmis ama gunes guvenligi olsun:
+---
+
+### 3. Uygulamayi K8s'e yerlestir (eger zaten yoksa)
+
 ```powershell
 cd C:\Users\ukbet\Desktop\DevopsProject4
 kubectl apply -f k8s\deployment.yaml
 kubectl apply -f k8s\service.yaml
 kubectl scale deployment/patent-app-deployment --replicas=2
+```
+**Bu ne yapiyor?**
+- `deployment.yaml`: K8s'e "patent-app container'ini calistir" der
+- `service.yaml`: Uygulamaya disardan erisilecek bir kapi (port 30080) acar
+- `scale --replicas=2`: 2 tane kopya (pod) calistirir → load balancing gosterimi icin
+
+**Kontrol:**
+```powershell
 kubectl get pods
 ```
-> 2 pod Running olmali.
+> `2/2` Running gormelisin (2 pod var, ikisi de calisiyor).
 
-### 4. Jenkins servis kontrolu
+---
+
+### 4. Jenkins'i baslat
+
 ```powershell
 Get-Service jenkins
 ```
-> Status `Running` olmali. Degilse: `Start-Service jenkins` (admin PowerShell'de).
+**Bu ne yapiyor?** Jenkins servisinin durumunu sorar. `Running` yaziyorsa tamam. Eger `Stopped` yaziyorsa **admin PowerShell'de** sunu calistir:
+```powershell
+Start-Service jenkins
+```
 
-Tarayicidan ac: <http://localhost:8080> -> admin / kurulumda belirledigin parola ile gir.
+Sonra tarayicidan ac: <http://localhost:8080> → kurulumda belirledigin admin parolasi ile giris yap.
 
-### 5. ngrok tunelini ac (webhook icin)
+---
+
+### 5. ngrok tunelini ac (GitHub webhook icin)
+
 ```powershell
 ngrok http 8080
 ```
-> Acilan pencerede `Forwarding` satirinda **yeni public URL** gozukur:
-> `https://XXXX-XXXX.ngrok-free.dev`
-> Bu URL **her ngrok baslattiginda DEGISIR** (ucretsiz plan).
+**Bu ne yapiyor?** Lokal Jenkins'i (`localhost:8080`) internetten erisilebilir yapan gecici bir adres uretir. Cunku GitHub bir webhook gondermek istediginde lokal bilgisayarini direkt bulamaz, ngrok aracilik eder.
 
-### 6. GitHub webhook URL'sini guncelle
-1. <https://github.com/UKBey/Devops_Project_4/settings/hooks>
+**Acilan ekranda:**
+```
+Forwarding   https://1234-5678.ngrok-free.dev → http://localhost:8080
+```
+Bu **`https://1234-5678.ngrok-free.dev`** adresi her ngrok aciliste **DEGISIR**. Bu adresi not et.
+
+> Bu PowerShell penceresini **kapatma**, sunum boyunca acik kalmasi gerek.
+
+---
+
+### 6. GitHub'da webhook URL'sini guncelle
+
+Ngrok'un verdigi yeni URL'yi GitHub'a soylemen lazim, yoksa push trigger calismaz.
+
+1. Tarayicida ac: <https://github.com/UKBey/Devops_Project_4/settings/hooks>
 2. Mevcut webhook'a tikla.
-3. **Payload URL** alanini guncelle:
-   `https://YENI-URL.ngrok-free.dev/github-webhook/` (sondaki `/` sart!)
-4. **Update webhook** -> yesil onay gelmeli.
+3. **Payload URL** alanina yapistir:
+   ```
+   https://YENI-NGROK-URL.ngrok-free.dev/github-webhook/
+   ```
+   > **Sondaki `/` karakteri sart!** Unutursan webhook calismaz.
+4. En altta **Update webhook** butonuna bas. Yesil onay gelmeli.
 
-> Webhook URL'sini guncellemezsen push trigger calismaz.
+---
 
-### 7. Son hazirlik kontrolu
+### 7. Son kontrol
+
 ```powershell
 minikube status
 Get-Service jenkins
 kubectl get pods
-docker version --format '{{.Server.Version}}'
+docker version
 ```
-Hepsi calisiyorsa **HAZIR**.
+Hepsi calisiyorsa **HAZIRSIN**. Sunuma gec.
 
 ---
 
-## B) SUNUM SIRASI (hocaya gosterilecek adimlar)
+## B) SUNUM SIRASI — Hocaya Gosterilecek Adimlar
 
-> **Hedef:** PDF'in a-e maddelerini tek bir akista kanitlamak.
-> En kritik bolum: **Adim 5** — push yaptiginda hem Jenkins pipeline tetiklenir, hem yeni frontend canliya cikar (a/b/c/d/e maddelerini ayni anda kapsar).
+> **Hedef:** PDF'in (a) Jenkins kurulu, (b) Minikube kurulu, (c) CI/CD pipeline var, (d) K8s'de calisiyor, (e) Beklendigi gibi davraniyor — bes maddesini de tek bir akista ispatlamak.
 
-### 1. Proje ozeti (sozlu)
-"Spring Boot web uygulamasi, modern bir frontend'i ve `/api/info` JSON endpoint'i var. GitHub'a push yapinca Jenkins pipeline 6 stage'i otomatik calistirir: clone, jar build, docker build, dockerhub login, push, K8s deploy. Minikube cluster'da 2 replica halinde calisiyor — frontend canli olarak hangi pod'un cevapladigini ve load balancing dagilimini gosteriyor."
+### 1. Once sozlu olarak ozetle
 
-### 2. Cluster ve servis ayakta
+Hocaya soyle:
+> "Patent Manager adli bir Spring Boot web uygulamasi yaptim. Yazarlar, patentler ve aralarindaki sertifikalari yoneten basit bir CRUD app. Bunu Docker container'ina koydum, DockerHub'a yukleyip Minikube K8s cluster'da 2 replica halinde calistiriyorum. Jenkins ile bir CI/CD pipeline kurdum: GitHub'a push yapinca otomatik olarak yeni image build ediliyor, DockerHub'a yukleniyor ve K8s deploy ediliyor. Simdi her adimi gostericem."
+
+---
+
+### 2. K8s cluster'in calistigini goster
+
 ```powershell
 minikube status
 kubectl get nodes
 kubectl get pods,svc
 ```
-> 2 pod Running, NodePort service var.
+**Hocaya soyle:** "Iste lokal Minikube cluster'im calisiyor, 2 pod Running durumda, NodePort service var. (a) ve (b) maddeleri burada — Jenkins de Minikube de lokalde kurulu ve calisiyor."
 
-### 3. Mevcut frontend'i ac (push'tan ONCE)
+---
+
+### 3. Patent Manager uygulamasini ac (gercek calisan haliyle)
+
 ```powershell
 minikube service patent-app-service
 ```
-> Tarayici otomatik acilir. Hocaya goster:
-> - Buyuk yesil kutuda **canli pod hostname** (1 sn'de bir auto-refresh)
-> - Pod degisince yesil kutu parlar, "Pod Degisimi" sayaci artar
-> - Load Balancing Dagilimi tablosu iki pod'un dagilimini gosterir
->
-> **Tarayici sekmesini acik birak**, sunum boyunca burayi yenileyecegiz.
+**Bu ne yapiyor?** Minikube'deki servise tarayicidan erisilecek gecici bir tunel acar ve tarayiciyi otomatik baslatir.
+
+**Hocaya goster:**
+- **Authors** tab → Tesla, Edison, Curie hazir gorunuyor
+- **Patents** tab → 4 patent var
+- **Certifications** tab → 4 sertifika (her biri yazar + patent + tarih + sure)
+- Sag ust kosedeki **yesil pod chip** → "iste su anda bu istegi karsilayan pod'un adi"
+- Yeni Author ekle: form doldur → Ekle → tabloya gelir
+- Yeni Certification ekle: dropdown'lardan sec, tarih + sure → Ekle
+
+**Hocaya soyle:** "(e) maddesi — uygulama beklendigi gibi calisiyor, CRUD yapabiliyorum."
+
+> **Bu sekmeyi acik birak**, sunum boyunca buraya geri donecegiz.
+
+---
 
 ### 4. Jenkins pipeline'i goster (push'tan ONCE)
-Tarayici: <http://localhost:8080/job/patent-app-pipeline/>
-- Stage View'da onceki build'in 6 yesil kutucugunu goster (Clone, Build, Docker, Login, Push, Deploy).
-- Son build numarasini **aklinda tut** (ornek: #5). Birazdan push yaptiginda #6 baslayacak.
-- Bir build'e tikla -> Console Output -> stage loglarini hocaya goster.
 
-### 5. **PUSH TRIGGER + CANLI DEPLOY DEMOSU** (en kritik adim — c/d/e maddelerinin kaniti)
+Tarayicida ac: <http://localhost:8080/job/patent-app-pipeline/>
 
-**Amac:** Hocaya "kod degisikligimin GitHub'a push edilmesi -> Jenkins'in otomatik tetiklenmesi -> DockerHub'a yeni image push'lanmasi -> K8s'in otomatik rollout yapmasi -> frontend'de canli yansima" zincirini ucu uca gostermek.
+**Hocaya goster:**
+- **Stage View**'da onceki build'lerin yesil kutucuklarini goster — 6 stage var:
+  1. Clone (kodu git'ten cek)
+  2. Build (jar yap)
+  3. Docker (image yap)
+  4. Login (DockerHub'a giris)
+  5. Push (image'i yukle)
+  6. Deploy (K8s'e ilet)
+- **Son build numarasini AKLINDA TUT** (ornek: #5). Birazdan push yapinca #6 baslayacak.
+- Bir build'e tikla → Console Output → loglarini goster.
 
-**Gorsel olarak farkedilecek ufak bir degisiklik yap.** Ornek: `index.html`'deki baslik altindaki aciklamaya bir kelime ekle ya da yeni badge koy.
+**Hocaya soyle:** "(c) maddesi — pipeline'im 6 stage ile calisiyor, su ana kadar 5 kere otomatik calismis."
+
+---
+
+### 5. ⭐ EN ONEMLI ADIM: Canli Push + Deploy Demosu
+
+**Bu tek adim PDF'in (c), (d), (e) maddelerini ayni anda ispatlar.**
+
+**Amac:** Sen kodda kucuk bir degisiklik yap, push et — Jenkins kendiliginden tetiklenip tum pipeline'i kossun, sonunda yeni hali tarayicida gozuksun.
+
+#### Adim 5.1 — Kodda gorunur bir degisiklik yap
 
 ```powershell
 cd C:\Users\ukbet\Desktop\DevopsProject4
-# Ornek: header aciklamasinin sonuna "(LIVE DEMO)" ekle
-(Get-Content src\main\resources\static\index.html) -replace 'Spring Boot \+ Docker \+ Kubernetes \+ Jenkins CI/CD', 'Spring Boot + Docker + Kubernetes + Jenkins CI/CD - LIVE DEMO' | Set-Content src\main\resources\static\index.html
+(Get-Content src\main\resources\static\index.html) -replace 'SWE304 Project 4 - Authors / Patents / Certifications', 'SWE304 Project 4 - LIVE DEMO BUILD' | Set-Content src\main\resources\static\index.html
+```
+**Bu ne yapiyor?** Index.html dosyasindaki sayfa altbasligini "LIVE DEMO BUILD" olarak degistirir. Goz ile rahat farkedilir.
 
+#### Adim 5.2 — Push et
+
+```powershell
 git add .
 git commit -m "Demo: trigger pipeline from push"
 git push
 ```
+**Bu ne yapiyor?** Degisikligi GitHub'a gonderir. GitHub webhook ile Jenkins'i tetikler.
 
-**Sonra hizlica gorsel takip:**
-1. Jenkins job sayfasini yenile -> **#6 build kendiliginden basladi**, "Started by GitHub push by UKBey" mesajini goster.
-2. Stage View'da yesil kutucuklarin sirayla dolmasini izleyin (~2-3 dk).
-3. Pipeline bitince **adim 3'teki tarayici sekmesini yenile** -> baslik altinda "LIVE DEMO" yazisi gozukur.
-4. "Iste pipeline gercekten kodumu DockerHub'a push'ladi, K8s yeni image'i pull'ladi ve canliya cikardi — hicbir manuel adim yok."
+#### Adim 5.3 — Jenkins sayfasini yenile
 
-> Bu tek adim PDF'in **(c) CI-CD pipeline**, **(d) Run on K8s**, **(e) Show as expected** maddelerini ucunu birden ispatlar.
+Tarayicida Jenkins'e geri don, sayfayi yenile (F5).
 
-### 6. DockerHub'da image (push'un dogrulanmasi)
+**Hocaya goster:**
+- Yeni build (#6) **kendiliginden basladi** — sen tiklamadin!
+- Build detayina tikla → "Started by GitHub push by UKBey" mesajini goster
+- Stage View'da yesil kutucuklarin sirayla dolmasini izleyin (~2-3 dakika)
+
+**Hocaya soyle:** "Iste hicbir manuel islem yok — sadece push yaptim, geri kalan her sey kendiliginden oluyor."
+
+#### Adim 5.4 — Pipeline bittikten sonra Patent Manager sekmesini yenile
+
+Tarayicida adim 3'teki Patent Manager sekmesine don, F5 ile yenile.
+
+**Hocaya goster:** Baslik altinda "LIVE DEMO BUILD" yazisi gozukmeli — degisiklik canliya cikti.
+
+**Hocaya soyle:** "Pipeline gercekten kodumu DockerHub'a yukledi, K8s yeni image'i cekti, eski pod'lari oldurup yeni pod'lar acti — hepsi otomatik. (c), (d), (e) maddelerinin ucu birden burada kanitlandi."
+
+---
+
+### 6. DockerHub'da yeni image'i goster
+
 Tarayici: <https://hub.docker.com/r/ukbey/patent-app/tags>
-- `latest` tag'inin "Last pushed" tarihinin **az once** oldugunu goster.
 
-### 7. Load balancing demosu (frontend uzerinden)
-- Adim 3'teki tarayici sekmesine geri don.
-- "Sayaclari Sifirla" butonuna bas.
-- 30-40 sn auto-refresh acik birak.
-- "Load Balancing Dagilimi" tablosunda **iki pod'un yaklasik 50/50 dagildigini** hocaya goster.
-- "Pod Degisimi" sayacinin artarak ilerledigini goster.
+**Hocaya goster:** `latest` tag'inin "Last pushed" tarihi **az once**. Yani gercekten Jenkins push'ladi.
 
-### 8. Cluster icinden ek kanit (busybox)
+---
+
+### 7. Load balancing'i goster
+
+Patent Manager sekmesine don. Sag ust kosedeki **pod chip**'e dikkat et.
+
+**F5 ile sayfayi pes pese 6-7 kere yenile.**
+
+**Hocaya goster:** Pod chip'teki isim iki farkli pod arasinda gidip geliyor. Mesela:
+- `patent-app-deployment-abc123-xyz` 
+- `patent-app-deployment-def456-uvw`
+
+**Hocaya soyle:** "K8s'in Service'i her HTTP isteji farkli pod'a yonlendiriyor — buna kube-proxy round-robin deniyor. 2 pod arasinda yuk paylastiriliyor."
+
+---
+
+### 8. Cluster icinden de kanit (busybox testi)
+
 ```powershell
 kubectl run lb-test --rm -i --restart=Never --image=busybox -- sh -c "for i in 1 2 3 4 5 6 7 8 9 10; do wget -qO- http://patent-app-service:8080/api/hello; echo; done"
 ```
-> Her cevapta "served by pod: ..." farkli pod hostname'i donmeli (cluster ICINDEN de load balancing calisiyor).
+**Bu ne yapiyor?** K8s cluster'in **icinden** kucuk bir busybox container ayaga kaldirir, 10 istek atip sonuclari basar.
 
-### 9. Scale demo (eklenti — vakit varsa)
+**Hocaya goster:** Her cevapta "served by pod: ..." farkli — yani cluster icinden de load balancing calisiyor.
+
+---
+
+### 9. Scale demosu (vakit varsa)
+
 ```powershell
-# Once 1 pod'a in
 kubectl scale deployment/patent-app-deployment --replicas=1
 kubectl get pods
-# Frontend tarayici sekmesinde sayaclari sifirla -> tek pod'a dustugu gozukur
-# Sonra 2'ye geri cik
-kubectl scale deployment/patent-app-deployment --replicas=2
+```
+**Bu ne yapiyor?** Pod sayisini 1'e dusurur. Bir pod silinir.
+
+```powershell
+kubectl scale deployment/patent-app-deployment --replicas=3
 kubectl get pods
 ```
-> Pod'larin gercek zamanli olusup yok oldugunu hem terminalde hem frontend tablosunda goster.
+**Bu ne yapiyor?** 3'e cikarir, 2 yeni pod olusur.
+
+```powershell
+kubectl scale deployment/patent-app-deployment --replicas=2
+```
+> Sunumu 2 ile bitir.
+
+**Hocaya soyle:** "K8s pod sayisini saniyeler icinde degistirebiliyor. Production'da yuk artinca otomatik olarak da scale edebilir."
 
 ---
 
-## C) Sorulara hazirlikli ol
+## C) Hocadan Gelebilecek Sorular
+
+**S: Bu projede DB var mi?**
+Var — H2 in-memory database. Pod ayaga kalkinca seed data yukleniyor (3 author, 4 patent, 4 certification). PDF "no DB expected" demis ama biz daha gercekci olsun diye ekledik.
+
+**S: 2 pod arasinda DB nasil paylasiliyor?**
+Paylasilmiyor — her pod'un kendi H2 instance'i var. Yeni Author eklersen sadece o pod'da olur, diger pod'da olmaz. Production'da cozumu external DB (PostgreSQL pod'u veya managed DB) kullanmak. Demo amaciyla boyle birakildi.
 
 **S: Pipeline neden 6 stage?**
-PDF'in istedigi: 1) clone, 2) build jar, 3) docker build, 4) dockerhub login, 5) push, 6) k8s deploy.
+PDF'in istedigi adimlar: 1) clone, 2) build jar, 3) docker build, 4) dockerhub login, 5) push, 6) k8s deploy.
 
 **S: Image nereden cekiliyor?**
-DockerHub'dan (`ukbey/patent-app:latest`). K8s deployment `imagePullPolicy: Always` ile her seferinde fresh ceker.
+DockerHub'dan: `ukbey/patent-app:latest`. K8s deployment'in `imagePullPolicy: Always` olarak ayarli, her seferinde fresh ceker.
 
 **S: Webhook nasil calisiyor?**
-GitHub push'tan sonra HTTP POST atiyor `ngrok-free.dev/github-webhook/` adresine. ngrok bunu localhost:8080'deki Jenkins'e tunelliyor. Jenkins "GitHub hook trigger" plugin'i ile job'i tetikliyor.
+GitHub push'tan sonra HTTP POST gonderir → ngrok tuneli → lokal Jenkins. Jenkins'in "GitHub hook trigger" plugin'i bunu alir ve job'i tetikler.
 
-**S: 2 pod arasinda yuk dagilimi nasil?**
-K8s Service (kube-proxy) round-robin yapiyor. busybox testi 10 istegi 2 pod'a dagitti.
+**S: Author <-> Patent iliskisi nasil modellenmis?**
+Many-to-Many iliski. Direkt `@ManyToMany` yerine **Certification** join entity'si kullandim cunku iliskide ekstra alanlar var (issueDate, durationYears). Certification, hem Author'a hem Patent'e `@ManyToOne` ile bagli.
 
-**S: Local'de DB var mi?**
-Yok. PDF "no DB expected" diyor, sadece tek endpoint olmasi yeterli.
+**S: Frontend hangi teknoloji?**
+Vanilla HTML + CSS + JavaScript. Spring Boot'un static resource ozelligi `index.html`'i `/` yolundan otomatik servis eder. Frontend `fetch()` ile REST API'lara istek atar.
 
-**S: Frontend nasil servis ediliyor?**
-Spring Boot, `src/main/resources/static/index.html` dosyasini otomatik olarak `/` yolundan servis eder (Spring Boot static resource handler). Frontend, `/api/info` JSON endpoint'ine her saniye AJAX istegi atip canli pod hostname'ini cekiyor. Boylece her istek farkli pod'a gidebildigi icin load balancing canli olarak gorulebiliyor.
+**S: Site internette mi?**
+Hayir, sadece lokalde. PDF zaten "local computer" ve "local Kubernetes cluster" diyor. Internete deploy gerekmiyor.
 
-**S: Site nasil aciliyor (web'de mi)?**
-Web'de degil, lokalde. `minikube service patent-app-service` komutu Minikube cluster'daki NodePort service icin gecici bir tunel acar ve tarayicida acar. PDF zaten "local computer" ve "local Kubernetes cluster" istiyor.
+**S: REST endpoint'ler neler?**
+- `GET /api/authors`, `POST /api/authors`, `DELETE /api/authors/{id}`
+- `GET /api/patents`, `POST /api/patents`, `DELETE /api/patents/{id}`
+- `GET /api/certifications`, `POST /api/certifications`, `DELETE /api/certifications/{id}`
+- `GET /api/info` → JSON (pod hostname)
+- `GET /api/hello` → text (load balancing testi icin)
+- `/h2-console` → DB browser
 
 ---
 
-## D) Sorun cikarsa hizli cozumler
+## D) Bir Sey Ters Giderse Hizli Cozumler
 
-| Belirti | Cozum |
-|---|---|
-| `minikube status` -> Stopped | `minikube start --driver=docker` |
-| Jenkins UI acilmiyor | `Start-Service jenkins` (admin PS) |
-| Webhook trigger olmuyor | ngrok URL degismistir -> GitHub Settings/Hooks'tan guncelle |
-| Pipeline "kubectl: command not found" | Machine PATH'te kubectl var mi kontrol et, yoksa restart Jenkins |
+| Sorun | Cozum |
+|-------|-------|
+| `minikube status` → Stopped | `minikube start --driver=docker` |
+| Jenkins UI acilmiyor | Admin PowerShell'de: `Start-Service jenkins` |
+| Webhook trigger olmuyor | ngrok URL degismistir → GitHub Settings/Hooks'tan guncelle |
+| Pipeline "kubectl: command not found" | PATH'te kubectl var mi kontrol et, varsa Jenkins'i restart |
 | Pipeline DockerHub'a push edemiyor | Jenkins'te `dockerhub-creds` credential var mi, ID birebir mi? |
-| Pod ImagePullBackOff | DockerHub'da image public mi, deployment.yaml'da image adi dogru mu (`ukbey/patent-app:latest`)? |
+| Pod ImagePullBackOff | DockerHub'da image public mi, deployment.yaml'da image adi dogru mu? |
+| Tarayicida site acilmiyor | `minikube service patent-app-service` ile yeni tunel ac |
+| 8080 port cakismasi | Jenkins zaten 8080'de — Spring Boot'u lokal calistirmaya kalkma, sadece Minikube uzerinden ac |
+
+---
+
+## E) Cok Hizli Ozet (Sunumdan 5 dakika once oku)
+
+1. Docker Desktop ac → minikube start → kubectl apply
+2. Jenkins servis kontrol → ngrok ac → GitHub webhook URL guncelle
+3. Sunumda: cluster goster → Patent Manager ac → Jenkins goster → push yap → kendiliginden deploy → yenile → "LIVE DEMO BUILD" gor → load balancing icin F5 → bitir
+
+**Mesaj:** "Hicbir manuel deploy yok. Sadece push. Gerisi otomatik."

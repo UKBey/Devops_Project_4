@@ -12,24 +12,24 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/patents")
-public class PatentController {
+@RequestMapping("/api/authors")
+public class AuthorController {
 
-    private final PatentRepository repo;
+    private final AuthorRepository repo;
 
-    public PatentController(PatentRepository repo) {
+    public AuthorController(AuthorRepository repo) {
         this.repo = repo;
     }
 
     @GetMapping
-    public List<Patent> all() {
+    public List<Author> all() {
         return repo.findAll();
     }
 
     @PostMapping
-    public Patent create(@RequestBody Patent patent) {
-        patent.setId(null);
-        return repo.save(patent);
+    public Author create(@RequestBody Author author) {
+        author.setId(null);
+        return repo.save(author);
     }
 
     @DeleteMapping("/{id}")
