@@ -7,3 +7,6 @@ target/
 .vscode/
 .mvn/
 .DS_Store
+.claude/
+setup/
+WEBHOOK-TEST.txt
