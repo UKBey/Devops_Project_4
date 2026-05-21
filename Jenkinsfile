@@ -6,6 +6,10 @@ pipeline {
         IMAGE_NAME     = "${DOCKERHUB_USER}/patent-app"
         IMAGE_TAG      = "latest"
         DOCKER_CRED    = 'dockerhub-creds'
+        // Jenkins SYSTEM hesabiyla calistigi icin kullanicinin guncel kubeconfig'ini
+        // acikca gosteriyoruz. Minikube her start'ta API portunu degistirir;
+        // bu dosya minikube start sonrasi otomatik guncellendigi icin hep dogru portu icerir.
+        KUBECONFIG     = 'C:\\Users\\ukbet\\.kube\\config'
     }
 
     stages {

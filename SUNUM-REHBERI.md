@@ -376,6 +376,7 @@ Hayir, sadece lokalde. PDF zaten "local computer" ve "local Kubernetes cluster" 
 | Jenkins UI acilmiyor | Admin PowerShell'de: `Start-Service jenkins` |
 | Webhook trigger olmuyor | ngrok URL degismistir → GitHub Settings/Hooks'tan guncelle |
 | Pipeline "kubectl: command not found" | PATH'te kubectl var mi kontrol et, varsa Jenkins'i restart |
+| Stage 6 "connection refused / dial tcp 127.0.0.1:..." | Minikube kapali VEYA Jenkins eski kubeconfig okuyor. Once `minikube status` (Running olmali). Jenkinsfile'da `KUBECONFIG` degiskeni `C:\Users\ukbet\.kube\config`'i gostermeli (bu fix yapildi). |
 | Pipeline DockerHub'a push edemiyor | Jenkins'te `dockerhub-creds` credential var mi, ID birebir mi? |
 | Pod ImagePullBackOff | DockerHub'da image public mi, deployment.yaml'da image adi dogru mu? |
 | Tarayicida site acilmiyor | `minikube service patent-app-service` ile yeni tunel ac |
